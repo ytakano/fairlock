@@ -1,6 +1,6 @@
 use std::cell::UnsafeCell;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 
 pub const NUM_LOCK: usize = 8;
 const MASK: usize = NUM_LOCK - 1;
@@ -37,17 +37,22 @@ impl<T> FairLock<T> {
 
         self.waiting[idx].store(true, Ordering::Relaxed);
         loop {
-            if !self.waiting[idx].load(Ordering::Acquire) {
+            if !self.waiting[idx].load(Ordering::Relaxed) {
                 break;
             }
 
-            if let Ok(_) =
-                self.lock
-                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            {
-                break;
+            if !self.lock.load(Ordering::Relaxed) {
+                if let Ok(_) = self.lock.compare_exchange_weak(
+                    false,
+                    true,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    break;
+                }
             }
         }
+        fence(Ordering::Acquire);
 
         FairLockGuard {
             fair_lock: self,
